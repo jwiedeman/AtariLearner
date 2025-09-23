@@ -48,19 +48,22 @@ class AgentState:
 
 
 class ReplayBuffer:
-    """Fixed-size replay buffer stored on a single device."""
+    """Fixed-size replay buffer stored on CPU-friendly tensors."""
 
     def __init__(self, capacity: int, obs_shape: Sequence[int], device: torch.device) -> None:
         self.capacity = int(capacity)
-        self.device = device
+        self.sample_device = torch.device(device)
+        self.storage_device = torch.device("cpu") if self.sample_device.type == "cuda" else self.sample_device
         self.obs_shape = tuple(int(x) for x in obs_shape)
 
-        self.states = torch.zeros((self.capacity, *self.obs_shape), dtype=torch.float32, device=self.device)
-        self.next_states = torch.zeros_like(self.states)
-        self.actions = torch.zeros(self.capacity, dtype=torch.int64, device=self.device)
-        self.rewards = torch.zeros(self.capacity, dtype=torch.float32, device=self.device)
-        self.dones = torch.zeros(self.capacity, dtype=torch.float32, device=self.device)
-        self.head_indices = torch.zeros(self.capacity, dtype=torch.int64, device=self.device)
+        self.states = torch.empty(
+            (self.capacity, *self.obs_shape), dtype=torch.uint8, device=self.storage_device
+        )
+        self.next_states = torch.empty_like(self.states)
+        self.actions = torch.empty(self.capacity, dtype=torch.int64, device=self.storage_device)
+        self.rewards = torch.empty(self.capacity, dtype=torch.float32, device=self.storage_device)
+        self.dones = torch.empty(self.capacity, dtype=torch.float32, device=self.storage_device)
+        self.head_indices = torch.empty(self.capacity, dtype=torch.int64, device=self.storage_device)
 
         self.size = 0
         self.cursor = 0
@@ -76,8 +79,16 @@ class ReplayBuffer:
         head_index: int,
     ) -> None:
         idx = self.cursor
-        self.states[idx].copy_(state)
-        self.next_states[idx].copy_(next_state)
+        self.states[idx].copy_(
+            torch.clamp(state, 0.0, 1.0).mul(255.0).to(
+                dtype=torch.uint8, device=self.storage_device, non_blocking=True
+            )
+        )
+        self.next_states[idx].copy_(
+            torch.clamp(next_state, 0.0, 1.0).mul(255.0).to(
+                dtype=torch.uint8, device=self.storage_device, non_blocking=True
+            )
+        )
         self.actions[idx] = int(action)
         self.rewards[idx] = float(reward)
         self.dones[idx] = 1.0 if done else 0.0
@@ -87,18 +98,26 @@ class ReplayBuffer:
         self.size = min(self.size + 1, self.capacity)
 
     # ------------------------------------------------------------------
-    def sample(self, batch_size: int, generator: torch.Generator) -> tuple[torch.Tensor, ...]:
+    def sample(
+        self, batch_size: int, generator: torch.Generator, to_device: torch.device
+    ) -> tuple[torch.Tensor, ...]:
         if self.size < batch_size:
             raise ValueError("Not enough samples to draw a batch")
 
-        indices = torch.randint(0, self.size, (batch_size,), generator=generator, device=self.device)
+        indices = torch.randint(
+            0, self.size, (batch_size,), generator=generator, device=self.storage_device
+        )
         return (
-            self.states.index_select(0, indices),
-            self.actions.index_select(0, indices),
-            self.rewards.index_select(0, indices),
-            self.next_states.index_select(0, indices),
-            self.dones.index_select(0, indices),
-            self.head_indices.index_select(0, indices),
+            self.states.index_select(0, indices)
+            .to(to_device, dtype=torch.float32, non_blocking=True)
+            .div_(255.0),
+            self.actions.index_select(0, indices).to(to_device, dtype=torch.int64, non_blocking=True),
+            self.rewards.index_select(0, indices).to(to_device, non_blocking=True),
+            self.next_states.index_select(0, indices)
+            .to(to_device, dtype=torch.float32, non_blocking=True)
+            .div_(255.0),
+            self.dones.index_select(0, indices).to(to_device, non_blocking=True),
+            self.head_indices.index_select(0, indices).to(to_device, dtype=torch.int64, non_blocking=True),
         )
 
     # ------------------------------------------------------------------
@@ -120,7 +139,7 @@ class ReplayBuffer:
             count = self.size
 
         start = (self.cursor - count) % self.capacity
-        order = (torch.arange(count, device=self.device) + start) % self.capacity
+        order = (torch.arange(count, device=self.storage_device) + start) % self.capacity
 
         payload = {
             "capacity": self.capacity,
@@ -143,7 +162,7 @@ class ReplayBuffer:
         capacity = int(payload.get("capacity", self.capacity))
         obs_shape = tuple(int(x) for x in payload.get("obs_shape", self.obs_shape))
 
-        if capacity != self.capacity or obs_shape != self.obs_shape or device != self.device:
+        if capacity != self.capacity or obs_shape != self.obs_shape or torch.device(device) != self.sample_device:
             self.__init__(capacity, obs_shape, device)
 
         size = int(payload.get("size", 0))
@@ -152,12 +171,31 @@ class ReplayBuffer:
             self.cursor = 0
             return
 
-        self.states[:size].copy_(payload["states"].to(device=device, dtype=torch.float32))
-        self.next_states[:size].copy_(payload["next_states"].to(device=device, dtype=torch.float32))
-        self.actions[:size].copy_(payload["actions"].to(device=device, dtype=torch.int64))
-        self.rewards[:size].copy_(payload["rewards"].to(device=device, dtype=torch.float32))
-        self.dones[:size].copy_(payload["dones"].to(device=device, dtype=torch.float32))
-        self.head_indices[:size].copy_(payload["head_indices"].to(device=device, dtype=torch.int64))
+        states_src = payload.get("states")
+        if states_src is not None:
+            states_cpu = states_src.to(device=self.storage_device)
+            if states_cpu.dtype == torch.uint8:
+                self.states[:size].copy_(states_cpu)
+            else:
+                self.states[:size].copy_(
+                    torch.clamp(states_cpu.to(dtype=torch.float32), 0.0, 1.0).mul(255.0).to(dtype=torch.uint8)
+                )
+
+        next_states_src = payload.get("next_states")
+        if next_states_src is not None:
+            next_states_cpu = next_states_src.to(device=self.storage_device)
+            if next_states_cpu.dtype == torch.uint8:
+                self.next_states[:size].copy_(next_states_cpu)
+            else:
+                self.next_states[:size].copy_(
+                    torch.clamp(next_states_cpu.to(dtype=torch.float32), 0.0, 1.0)
+                    .mul(255.0)
+                    .to(dtype=torch.uint8)
+                )
+        self.actions[:size].copy_(payload["actions"].to(device=self.storage_device, dtype=torch.int64))
+        self.rewards[:size].copy_(payload["rewards"].to(device=self.storage_device, dtype=torch.float32))
+        self.dones[:size].copy_(payload["dones"].to(device=self.storage_device, dtype=torch.float32))
+        self.head_indices[:size].copy_(payload["head_indices"].to(device=self.storage_device, dtype=torch.int64))
 
         self.size = size
         self.cursor = int(payload.get("cursor", size % self.capacity)) % self.capacity
@@ -272,8 +310,11 @@ class Agent:
         self.max_snapshots = max(0, int(max_snapshots))
 
         # Torch random generator dedicated to reproducible sampling.
+        base_seed = torch.initial_seed()
         self._rng = torch.Generator(device=self.device)
-        self._rng.manual_seed(torch.initial_seed())
+        self._rng.manual_seed(base_seed)
+        self._cpu_rng = torch.Generator(device="cpu")
+        self._cpu_rng.manual_seed(base_seed)
 
         self.policy = _MultiHeadQNetwork(self.MAX_ACTIONS).to(self.device)
         self.target_policy = _MultiHeadQNetwork(self.MAX_ACTIONS).to(self.device)
@@ -503,7 +544,7 @@ class Agent:
         if self.replay.size < max(self.BATCH_SIZE, self.LEARNING_STARTS):
             return
 
-        batch = self.replay.sample(self.BATCH_SIZE, self._rng)
+        batch = self.replay.sample(self.BATCH_SIZE, self._cpu_rng, self.device)
         states, actions, rewards, next_states, dones, head_indices = batch
 
         head_keys = [self._head_index_to_game[int(idx)] for idx in head_indices.tolist()]
