@@ -325,6 +325,8 @@ def viewer_proc(
     root.title(f"AtariLearner Viewer – {env_name} (env {env_index})")
     root.resizable(False, False)
 
+    print(f"[viewer] launching viewer for {env_name} (env {env_index})")
+
     label = tk.Label(root)
     label.pack()
 
@@ -379,6 +381,41 @@ def viewer_proc(
         print(f"[viewer] encountered an error: {exc}")
 
 
+def _monitor_processes(
+    procs: Sequence[mp.Process],
+    shutdown,
+    duration_seconds: Optional[int],
+    start_time: float,
+    failure_flag: Optional[threading.Event] = None,
+    stop_event: Optional[threading.Event] = None,
+) -> None:
+    """Watch child processes and trigger shutdown when required."""
+
+    while not shutdown.is_set():
+        if stop_event is not None and stop_event.is_set():
+            return
+
+        if duration_seconds is not None and time.time() - start_time >= duration_seconds:
+            shutdown.set()
+            break
+
+        if stop_event is not None:
+            if stop_event.wait(timeout=15):
+                return
+        else:
+            shutdown.wait(timeout=15)
+
+        for proc in procs:
+            if not proc.is_alive():
+                print("RIP SOMEONE CRASHED", file=sys.stderr)
+                if failure_flag is not None:
+                    failure_flag.set()
+                shutdown.set()
+                return
+
+        sys.stdout.flush()
+        sys.stderr.flush()
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv or sys.argv[1:])
 
@@ -426,6 +463,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     proc_configs.append({'target': bg_record_proc, 'args': (obs_s, info_s, shutdown, selected_games, first_start_at)})
 
+    viewer_args: Optional[tuple] = None
     if args.show_viewer and num_envs:
         viewer_index = args.viewer_env_index
         if args.viewer_game:
@@ -439,28 +477,40 @@ def main(argv: Sequence[str] | None = None) -> None:
             raise ValueError(
                 f"viewer index {viewer_index} is out of range for {num_envs} environment(s)."
             )
-        proc_configs.append(
-            {
-                'target': viewer_proc,
-                'args': (obs_s, shutdown, viewer_index, selected_games, args.viewer_scale, args.viewer_fps),
-            }
-        )
+        viewer_args = (obs_s, shutdown, viewer_index, selected_games, args.viewer_scale, args.viewer_fps)
 
     procs = [mp.Process(**cfg) for cfg in proc_configs]
 
     for p in procs:
         p.start()
 
+    failure_flag = threading.Event()
     try:
         duration = int(os.environ["RUNDURATIONSECONDS"])
-        while time.time() - first_start_at < duration:
-            time.sleep(15)
-            for i, p in enumerate(procs):
-                if not p.is_alive():
-                    print("RIP SOMEONE CRASHED", file=sys.stderr)
-                    sys.exit(1)
-            sys.stdout.flush()
-            sys.stderr.flush()
+        monitor_args = (procs, shutdown, duration, first_start_at)
+        monitor_kwargs = {"failure_flag": failure_flag}
+
+        if viewer_args is not None:
+            stop_monitor = threading.Event()
+            monitor_thread = threading.Thread(
+                target=_monitor_processes,
+                args=monitor_args,
+                kwargs={**monitor_kwargs, "stop_event": stop_monitor},
+                daemon=True,
+            )
+            monitor_thread.start()
+            viewer_finished_cleanly = False
+            try:
+                viewer_proc(*viewer_args)
+                viewer_finished_cleanly = True
+            finally:
+                stop_monitor.set()
+                while monitor_thread.is_alive():
+                    monitor_thread.join(timeout=0.5)
+                if viewer_finished_cleanly and not shutdown.is_set():
+                    _monitor_processes(*monitor_args, **monitor_kwargs)
+        else:
+            _monitor_processes(*monitor_args, **monitor_kwargs)
     except KeyboardInterrupt:
         print("\nShutdown signal received...")
     finally:
@@ -471,6 +521,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             if p.is_alive():
                 p.terminate()
         print("All processes terminated.")
+        if failure_flag.is_set():
+            sys.exit(1)
 
 
 if __name__ == "__main__":
