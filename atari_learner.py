@@ -181,6 +181,14 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
             "(default: 5)."
         ),
     )
+    parser.add_argument(
+        "--fresh-agent",
+        action="store_true",
+        help=(
+            "Start training from a freshly initialised agent instead of loading an existing checkpoint. "
+            "Useful when you explicitly want to train a new model."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.game and args.games:
@@ -324,7 +332,17 @@ def env_proc(first_start_at, game_chunk, offset, obs_s, act_s, info_s, shutdown,
     for t in threads: t.start()
     for t in threads: t.join()
 
-def agent_proc(obs_s, act_s, info_s, shutdown, game_ids, checkpoint_dir, checkpoint_interval, max_snapshots):
+def agent_proc(
+    obs_s,
+    act_s,
+    info_s,
+    shutdown,
+    game_ids,
+    checkpoint_dir,
+    checkpoint_interval,
+    max_snapshots,
+    fresh_agent,
+):
     seed('agent', 0)
     from myagent import Agent
 
@@ -335,7 +353,7 @@ def agent_proc(obs_s, act_s, info_s, shutdown, game_ids, checkpoint_dir, checkpo
     agent = Agent(game_ids=game_ids, max_snapshots=max_snapshots)
     agent.configure_envs(game_ids)
 
-    if os.path.exists(checkpoint_path):
+    if not fresh_agent and os.path.exists(checkpoint_path):
         try:
             print(f"loading existing checkpoint from {checkpoint_path}")
             agent.load(checkpoint_path)
@@ -343,6 +361,10 @@ def agent_proc(obs_s, act_s, info_s, shutdown, game_ids, checkpoint_dir, checkpo
             print("checkpoint load successful")
         except Exception as exc:
             print(f"failed to load checkpoint {checkpoint_path}: {exc}")
+    elif fresh_agent and os.path.exists(checkpoint_path):
+        print(
+            "--fresh-agent specified: existing checkpoint will be ignored and a new model will be initialised"
+        )
 
     try:
         print(f"saving initial checkpoint to {checkpoint_path}")
@@ -708,6 +730,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 args.checkpoint_dir,
                 int(args.checkpoint_interval),
                 int(args.max_checkpoint_snapshots),
+                bool(args.fresh_agent),
             ),
         }
     ]
