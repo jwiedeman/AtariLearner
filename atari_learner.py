@@ -16,7 +16,7 @@ import random
 import sys
 import threading
 import time
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 
 import gymnasium as gym
 import numpy as np
@@ -107,6 +107,47 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help=(
             "Maximum steps per episode passed to Gymnasium.  Defaults to 45 minutes worth of frames "
             "at the selected FPS."
+        ),
+    )
+    parser.add_argument(
+        "--show-viewer",
+        action="store_true",
+        help=(
+            "Launch a lightweight Tkinter window that shows a live feed from one environment. "
+            "Requires Pillow (pip install pillow)."
+        ),
+    )
+    parser.add_argument(
+        "--viewer-env-index",
+        type=int,
+        default=0,
+        help=(
+            "Index of the environment to display when --show-viewer is set.  "
+            "Defaults to the first environment in the selected list."
+        ),
+    )
+    parser.add_argument(
+        "--viewer-game",
+        type=str,
+        default=None,
+        help=(
+            "Name of the environment to display when --show-viewer is set.  "
+            "Overrides --viewer-env-index when provided."
+        ),
+    )
+    parser.add_argument(
+        "--viewer-scale",
+        type=float,
+        default=2.0,
+        help="Scaling factor applied to the viewer window when --show-viewer is set (default: 2x).",
+    )
+    parser.add_argument(
+        "--viewer-fps",
+        type=float,
+        default=30.0,
+        help=(
+            "Approximate refresh rate of the viewer window when --show-viewer is set.  "
+            "Lower values reduce CPU usage (default: 30)."
         ),
     )
     args = parser.parse_args(argv)
@@ -242,6 +283,102 @@ def agent_proc(obs_s, act_s, info_s, shutdown):
             last_save_time = time.time()
 
 
+def _trim_black_borders(frame: np.ndarray) -> np.ndarray:
+    """Return the slice of ``frame`` that excludes surrounding zero rows/columns."""
+
+    if frame.ndim != 3:
+        return frame
+    mask = frame.any(axis=2)
+    row_mask = mask.any(axis=1)
+    col_mask = mask.any(axis=0)
+    rows = np.where(row_mask)[0]
+    cols = np.where(col_mask)[0]
+    if rows.size and cols.size:
+        return frame[rows[0] : rows[-1] + 1, cols[0] : cols[-1] + 1]
+    return frame
+
+
+def viewer_proc(
+    obs_s: Tensor,
+    shutdown,
+    env_index: int,
+    game_list: Sequence[str],
+    scale: float,
+    target_fps: float,
+):
+    """Display a live feed from ``obs_s`` for a single environment."""
+
+    try:
+        import tkinter as tk
+    except Exception as exc:  # pragma: no cover - platform specific
+        print(f"[viewer] Tkinter unavailable – viewer disabled ({exc})")
+        return
+
+    try:
+        from PIL import Image, ImageTk
+    except ImportError:  # pragma: no cover - optional dependency
+        print("[viewer] Pillow not installed – run 'pip install pillow' to enable the live viewer")
+        return
+
+    env_name = game_list[env_index] if env_index < len(game_list) else f"env_{env_index}"
+    root = tk.Tk()
+    root.title(f"AtariLearner Viewer – {env_name} (env {env_index})")
+    root.resizable(False, False)
+
+    label = tk.Label(root)
+    label.pack()
+
+    last_frame: Optional[np.ndarray] = None
+    interval_ms = int(max(1.0, 1000.0 / max(target_fps, 1e-3)))
+
+    def update_frame() -> None:
+        nonlocal last_frame
+
+        if shutdown.is_set():
+            root.destroy()
+            return
+
+        with torch.no_grad():
+            frame_tensor = obs_s[env_index].detach()
+            if frame_tensor.device.type != "cpu":
+                frame_tensor = frame_tensor.to("cpu")
+            else:
+                frame_tensor = frame_tensor.clone()
+        frame = frame_tensor.numpy()
+
+        if frame.any():
+            trimmed = _trim_black_borders(frame)
+            frame_to_show = np.ascontiguousarray(trimmed)
+            last_frame = frame_to_show.copy()
+        elif last_frame is not None:
+            frame_to_show = last_frame
+        else:
+            frame_to_show = np.zeros((1, 1, 3), dtype=np.uint8)
+
+        image = Image.fromarray(frame_to_show)
+        if scale != 1.0:
+            new_size = (
+                max(1, int(image.width * scale)),
+                max(1, int(image.height * scale)),
+            )
+            image = image.resize(new_size, Image.NEAREST)
+        photo = ImageTk.PhotoImage(image=image)
+        label.configure(image=photo)
+        label.image = photo
+        root.after(interval_ms, update_frame)
+
+    root.after(0, update_frame)
+
+    def on_close() -> None:
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", on_close)
+    try:
+        root.mainloop()
+    except Exception as exc:  # pragma: no cover - GUI loop exceptions
+        print(f"[viewer] encountered an error: {exc}")
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv or sys.argv[1:])
 
@@ -288,6 +425,26 @@ def main(argv: Sequence[str] | None = None) -> None:
     from bg_record import bg_record_proc
 
     proc_configs.append({'target': bg_record_proc, 'args': (obs_s, info_s, shutdown, selected_games, first_start_at)})
+
+    if args.show_viewer and num_envs:
+        viewer_index = args.viewer_env_index
+        if args.viewer_game:
+            try:
+                viewer_index = selected_games.index(args.viewer_game)
+            except ValueError:
+                raise ValueError(
+                    f"Requested viewer game '{args.viewer_game}' is not part of the selected game list."
+                ) from None
+        if not (0 <= viewer_index < num_envs):
+            raise ValueError(
+                f"viewer index {viewer_index} is out of range for {num_envs} environment(s)."
+            )
+        proc_configs.append(
+            {
+                'target': viewer_proc,
+                'args': (obs_s, shutdown, viewer_index, selected_games, args.viewer_scale, args.viewer_fps),
+            }
+        )
 
     procs = [mp.Process(**cfg) for cfg in proc_configs]
 

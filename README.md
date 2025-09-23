@@ -217,6 +217,19 @@ process count low so the run fits comfortably on a MacBook.
    python atari_learner.py --games ALE/Pong-v5 ALE/Breakout-v5 --device cpu
    ```
 
+### Watching the run live
+
+Pass `--show-viewer` to open a lightweight Tkinter window that mirrors one of the
+environments in real time.  The viewer defaults to the first environment in the
+selected list, but you can target a specific game via `--viewer-game
+ALE/Pong-v5` or by passing the numeric index with `--viewer-env-index 3`.
+
+Additional knobs let you rescale the window (`--viewer-scale 3`) or reduce the
+refresh rate to save CPU time (`--viewer-fps 15`).  The implementation depends on
+[`tkinter`](https://docs.python.org/3/library/tkinter.html) (ships with Python)
+and [Pillow](https://python-pillow.org/); install Pillow with `pip install
+pillow` if you do not already have it in your environment.
+
 The script prints the number of environments, seeds per game, and periodically checks that all child processes are still alive.  When the duration elapses (or you interrupt execution) the shutdown flag is broadcast so every process exits cleanly.
 
 Checkpoint files (`agent.pt` by default) are written to the current working directory every ~29 minutes.  You can change the path or cadence inside `agent_proc`.
@@ -236,6 +249,11 @@ The runner exposes a handful of switches so you can tailor it to the hardware yo
 | `--fps 30` | Target frame rate per environment. |
 | `--max-episode-steps 10000` | Override the maximum episode length passed to Gymnasium. |
 | `--start-method spawn` | Force a specific multiprocessing start method (Linux defaults to `forkserver`, macOS to `spawn`). |
+| `--show-viewer` | Open a Tkinter window with a live feed from one environment. |
+| `--viewer-game ALE/Pong-v5` | Pick the environment shown in the viewer by name. |
+| `--viewer-env-index 0` | Choose the environment shown in the viewer by index. |
+| `--viewer-scale 2.0` | Scale the viewer window by the provided factor. |
+| `--viewer-fps 30` | Target refresh rate for the viewer window (lower values reduce CPU usage). |
 
 Run `python atari_learner.py --help` to see the complete list and default values.
 
