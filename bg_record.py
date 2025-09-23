@@ -36,10 +36,10 @@ __all__ = [
 class _ThreadRecorderState:
     """Per-thread state updated by :func:`log_step`.
 
-    ``info_tensor`` is a shared CUDA tensor with four statistics per environment:
-    cumulative reward, frame count, terminated flag, and truncated flag.  The
-    tensor is written to directly so that the learner can consume the data
-    without any additional synchronisation primitives.
+    ``info_tensor`` is a shared tensor (CPU or CUDA) with four statistics per
+    environment: cumulative reward, frame count, terminated flag, and truncated
+    flag.  The tensor is written to directly so that the learner can consume the
+    data without any additional synchronisation primitives.
     """
 
     game_id: str
@@ -78,8 +78,9 @@ def log_step(action: int, obs, reward: float, terminated: bool, truncated: bool)
     state.episode_reward += float(reward)
     state.frame_count += 1
 
-    # ``info_tensor`` lives on the GPU.  Assigning to individual elements is
-    # safe from CPU threads and keeps everything device-resident.
+    # ``info_tensor`` can live on either the CPU or GPU.  Assigning to
+    # individual elements is safe from CPU threads and keeps everything
+    # device-resident.
     row = state.tensor_row()
     row[0] = state.episode_reward
     row[1] = float(state.frame_count)

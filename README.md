@@ -9,6 +9,14 @@ This repository contains the multi-process runner used in the viral demo by **@a
 > export RUNDURATIONSECONDS=$((60*60))    # run for one hour
 > python atari_learner.py
 > ```
+>
+> On more modest hardware (for example an Apple Silicon laptop) you can now run a single environment on the CPU by selecting it on the command line:
+>
+> ```bash
+> export myseed=1
+> export RUNDURATIONSECONDS=$((5*60))     # run for five minutes
+> python atari_learner.py --game ALE/Pong-v5 --device cpu
+> ```
 
 ---
 
@@ -23,8 +31,8 @@ This repository contains the multi-process runner used in the viral demo by **@a
 `atari_learner.py` is responsible for:
 
 * Spawning one learner process (`agent_proc`) that continuously calls `Agent.act_and_learn(...)`.
-* Launching 16 environment worker processes (`env_proc`) that each host several Gymnasium Atari environments driven by background threads.
-* Maintaining shared CUDA tensors that hold RGB observations, selected actions, and auxiliary episode statistics for every game in the list of 57 Atari titles shipped in Gymnasium.
+* Launching a configurable number of environment worker processes (`env_proc`) that each host several Gymnasium Atari environments driven by background threads.
+* Maintaining shared tensors (CPU or CUDA, depending on how you launch the runner) that hold RGB observations, selected actions, and auxiliary episode statistics for every game in the list of 57 Atari titles shipped in Gymnasium.
 * Periodically checkpointing the agent by calling its `save`/`load` methods.
 * (Optionally) Streaming video/metrics by delegating to a background recorder process (see `bg_record.py`).
 
@@ -45,13 +53,15 @@ The original tweet referenced training on a single NVIDIA RTX 4090 at 60 FPS per
 
 You can scale `NUM_PROCS` or trim the game list in `atari_learner.py` if you are experimenting on smaller hardware.
 
+As of this update the orchestrator can also run on CPU-only systems.  Use `--game` to target a single title (or provide a shorter list via `--games`) and pass `--device cpu` to allocate the shared tensors on host memory.  The runner automatically switches to the safer `spawn` multiprocessing start method on macOS.
+
 ---
 
 ## 3. Software Requirements
 
 | Component | Recommended Version | Notes |
 |-----------|--------------------|-------|
-| Operating system | Linux (Ubuntu 22.04 tested) | Uses `forkserver` multiprocessing start method. |
+| Operating system | Linux (Ubuntu 22.04 tested), macOS 14+ | Uses `forkserver` on Linux and automatically falls back to `spawn` on macOS. |
 | Python | 3.10+ | Matches current Gymnasium / PyTorch releases. |
 | CUDA toolkit & drivers | 12.x (or 11.8+) | Needed for the PyTorch GPU build. |
 | PyTorch | Latest stable with CUDA support | Install from [pytorch.org](https://pytorch.org/get-started/locally/). |
@@ -108,8 +118,9 @@ class Agent:
         """Restore a previously saved checkpoint."""
 ```
 
-The reference agent keeps all tensors on the GPU, samples random actions, and
-tracks a couple of diagnostic counters.  Replace the body of
+The reference agent keeps tensors on whichever device the runner selects
+(preferring the GPU when available), samples random actions, and tracks a
+couple of diagnostic counters.  Replace the body of
 `act_and_learn`/`save`/`load` with your training logic when you are ready to
 experiment with real models.
 
@@ -117,7 +128,7 @@ experiment with real models.
 
 `atari_learner.py` also imports a background recorder module.  The built-in
 version focuses on metrics: environment workers call `bind_logger`,
-`log_step`, and `log_close` to update a shared CUDA tensor, while the
+`log_step`, and `log_close` to update a shared tensor, while the
 `bg_record_proc` process periodically prints aggregate statistics.  Power users
 can swap in their own recorder that writes gameplay video, streams metrics, or
 integrates with experiment tracking services.
@@ -143,32 +154,52 @@ python atari_learner.py
 
 ## 6. Running the Suite
 
-1. Ensure that your CUDA device is visible (`CUDA_VISIBLE_DEVICES` if needed).
-2. Start the Python virtual environment and set the environment variables above.
-3. Optionally edit `NUM_PROCS`, `games`, `FPS`, or `MAX_EPISODE_STEPS` in `atari_learner.py` to match your hardware constraints.
-4. Launch the runner:
+1. Start the Python virtual environment and set the `myseed`/`RUNDURATIONSECONDS` variables shown above.
+2. Decide which environments to launch:
+   * **Full suite:** run `python atari_learner.py` with no extra flags.
+   * **Single environment:** add `--game ALE/Pong-v5` (or any other ID from the Gymnasium registry).
+   * **Custom list:** provide multiple IDs with `--games ALE/Pong-v5 ALE/Breakout-v5`.
+3. Pick a device with `--device {auto,cuda,cpu}`.  The default `auto` uses CUDA when available and falls back to CPU otherwise.
+4. (Optional) Tune parallelism with `--num-procs` and the frame rate with `--fps`/`--max-episode-steps`.  These replace the manual edits that were previously required.
+5. Launch the runner.  For example, to run Pong and Breakout on the CPU:
 
    ```bash
-   python atari_learner.py
+   python atari_learner.py --games ALE/Pong-v5 ALE/Breakout-v5 --device cpu
    ```
 
-5. The script prints the number of environments, seeds per game, and periodically checks that all child processes are still alive.  When the duration elapses (or you interrupt execution) the shutdown flag is broadcast so every process exits cleanly.
+The script prints the number of environments, seeds per game, and periodically checks that all child processes are still alive.  When the duration elapses (or you interrupt execution) the shutdown flag is broadcast so every process exits cleanly.
 
 Checkpoint files (`agent.pt` by default) are written to the current working directory every ~29 minutes.  You can change the path or cadence inside `agent_proc`.
 
 ---
 
-## 7. Troubleshooting & Tips
+## 7. Useful Command-Line Flags
+
+The runner exposes a handful of switches so you can tailor it to the hardware you have on hand:
+
+| Flag | Description |
+|------|-------------|
+| `--game ALE/Pong-v5` | Launch exactly one environment. |
+| `--games ...` | Provide an explicit list of Gymnasium environment IDs to run simultaneously. |
+| `--device {auto,cuda,cpu}` | Choose where the shared tensors live.  `auto` prefers CUDA when available. |
+| `--num-procs N` | Number of environment worker processes.  Defaults to `min(16, number of environments)`. |
+| `--fps 30` | Target frame rate per environment. |
+| `--max-episode-steps 10000` | Override the maximum episode length passed to Gymnasium. |
+| `--start-method spawn` | Force a specific multiprocessing start method (Linux defaults to `forkserver`, macOS to `spawn`). |
+
+Run `python atari_learner.py --help` to see the complete list and default values.
+
+## 8. Troubleshooting & Tips
 
 * **First-run ROM download:** The `gymnasium[atari]` extra will prompt you to accept the ROM license the first time you create an Atari environment.  If you are running headless, pre-download the ROMs by running `python -c "import gymnasium as gym; gym.make('ALE/Pong-v5')"` once interactively.
-* **CUDA out of memory:** Reduce `NUM_PROCS`, lower the resolution of the shared observation tensor, or decrease the number of simultaneous games (`games` list) while prototyping.
+* **CUDA out of memory:** Reduce `--num-procs`, lower the resolution of the shared observation tensor, or decrease the number of simultaneous games by selecting a smaller set with `--games`.
 * **Slow agent loop:** The runner does not throttle the learner.  If your `Agent.act_and_learn` is slow the environments will effectively step at a lower frame-rate.  Profile with PyTorch's `torch.autograd.profiler` or wrap the call in timers.
-* **Stability on Mac/Windows:** The script assumes a Unix-like environment and uses `forkserver`.  Windows users should run under WSL2 with CUDA passthrough.
+* **Stability on Mac/Windows:** The script assumes a Unix-like environment.  Linux defaults to the `forkserver` start method, while macOS automatically switches to `spawn`.  Windows users should run under WSL2 with CUDA passthrough.
 * **Video capture disabled:** If you do not need the video/metric recorder simply provide a dummy `bg_record.py` that defines the expected functions but does nothing.
 
 ---
 
-## 8. Credits
+## 9. Credits
 
 * Original concept and demo by [@actualhog](https://twitter.com/actualhog).
 * Inspired by John Carmack's discussion on real-time learning.
