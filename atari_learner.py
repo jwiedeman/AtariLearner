@@ -11,6 +11,7 @@ only Mac).
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import random
 import sys
@@ -113,17 +114,17 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "--show-viewer",
         action="store_true",
         help=(
-            "Launch a lightweight Tkinter window that shows a live feed from one environment. "
+            "Launch a lightweight Tkinter window that shows live feeds from the selected environments. "
             "Requires Pillow (pip install pillow)."
         ),
     )
     parser.add_argument(
         "--viewer-env-index",
         type=int,
-        default=0,
+        default=None,
         help=(
             "Index of the environment to display when --show-viewer is set.  "
-            "Defaults to the first environment in the selected list."
+            "By default the viewer tiles every available environment."
         ),
     )
     parser.add_argument(
@@ -301,12 +302,12 @@ def _trim_black_borders(frame: np.ndarray) -> np.ndarray:
 def viewer_proc(
     obs_s: Tensor,
     shutdown,
-    env_index: int,
+    env_indices: Sequence[int],
     game_list: Sequence[str],
     scale: float,
     target_fps: float,
 ):
-    """Display a live feed from ``obs_s`` for a single environment."""
+    """Display live feeds from ``obs_s`` for one or more environments."""
 
     try:
         import tkinter as tk
@@ -320,53 +321,97 @@ def viewer_proc(
         print("[viewer] Pillow not installed – run 'pip install pillow' to enable the live viewer")
         return
 
-    env_name = game_list[env_index] if env_index < len(game_list) else f"env_{env_index}"
+    env_indices = list(env_indices)
+    if not env_indices:
+        print("[viewer] no environments selected – viewer disabled")
+        return
+
+    env_names = [
+        game_list[i] if i < len(game_list) else f"env_{i}"
+        for i in env_indices
+    ]
+
     root = tk.Tk()
-    root.title(f"AtariLearner Viewer – {env_name} (env {env_index})")
+    if len(env_indices) == 1:
+        title_env = env_names[0]
+        title_suffix = f" – {title_env} (env {env_indices[0]})"
+    else:
+        title_suffix = f" – {len(env_indices)} environments"
+    root.title(f"AtariLearner Viewer{title_suffix}")
     root.resizable(False, False)
 
-    print(f"[viewer] launching viewer for {env_name} (env {env_index})")
+    if len(env_indices) == 1:
+        print(f"[viewer] launching viewer for {env_names[0]} (env {env_indices[0]})")
+    else:
+        print(f"[viewer] launching viewer for {len(env_indices)} environments")
 
-    label = tk.Label(root)
-    label.pack()
+    num_tiles = len(env_indices)
+    num_cols = max(1, math.ceil(math.sqrt(num_tiles)))
+    num_rows = max(1, math.ceil(num_tiles / num_cols))
 
-    last_frame: Optional[np.ndarray] = None
+    tiles = []
+    for pos, (env_index, env_name) in enumerate(zip(env_indices, env_names)):
+        frame = tk.Frame(root, borderwidth=1, relief="solid")
+        row = pos // num_cols
+        col = pos % num_cols
+        frame.grid(row=row, column=col, padx=4, pady=4, sticky="nsew")
+
+        image_label = tk.Label(frame)
+        image_label.pack()
+
+        caption = tk.Label(frame, text=f"{env_name} (env {env_index})")
+        caption.pack()
+
+        tiles.append({
+            "env_index": env_index,
+            "image_label": image_label,
+        })
+
+    for r in range(num_rows):
+        root.grid_rowconfigure(r, weight=1)
+    for c in range(num_cols):
+        root.grid_columnconfigure(c, weight=1)
+
+    last_frames: List[Optional[np.ndarray]] = [None] * num_tiles
     interval_ms = int(max(1.0, 1000.0 / max(target_fps, 1e-3)))
 
     def update_frame() -> None:
-        nonlocal last_frame
-
         if shutdown.is_set():
             root.destroy()
             return
 
-        with torch.no_grad():
-            frame_tensor = obs_s[env_index].detach()
-            if frame_tensor.device.type != "cpu":
-                frame_tensor = frame_tensor.to("cpu")
+        for tile_index, tile in enumerate(tiles):
+            env_index = tile["env_index"]
+
+            with torch.no_grad():
+                frame_tensor = obs_s[env_index].detach()
+                if frame_tensor.device.type != "cpu":
+                    frame_tensor = frame_tensor.to("cpu")
+                else:
+                    frame_tensor = frame_tensor.clone()
+            frame = frame_tensor.numpy()
+
+            if frame.any():
+                trimmed = _trim_black_borders(frame)
+                frame_to_show = np.ascontiguousarray(trimmed)
+                last_frames[tile_index] = frame_to_show.copy()
+            elif last_frames[tile_index] is not None:
+                frame_to_show = last_frames[tile_index]
             else:
-                frame_tensor = frame_tensor.clone()
-        frame = frame_tensor.numpy()
+                frame_to_show = np.zeros((1, 1, 3), dtype=np.uint8)
 
-        if frame.any():
-            trimmed = _trim_black_borders(frame)
-            frame_to_show = np.ascontiguousarray(trimmed)
-            last_frame = frame_to_show.copy()
-        elif last_frame is not None:
-            frame_to_show = last_frame
-        else:
-            frame_to_show = np.zeros((1, 1, 3), dtype=np.uint8)
+            image = Image.fromarray(frame_to_show)
+            if scale != 1.0:
+                new_size = (
+                    max(1, int(image.width * scale)),
+                    max(1, int(image.height * scale)),
+                )
+                image = image.resize(new_size, Image.NEAREST)
+            photo = ImageTk.PhotoImage(image=image)
+            tile_label = tile["image_label"]
+            tile_label.configure(image=photo)
+            tile_label.image = photo
 
-        image = Image.fromarray(frame_to_show)
-        if scale != 1.0:
-            new_size = (
-                max(1, int(image.width * scale)),
-                max(1, int(image.height * scale)),
-            )
-            image = image.resize(new_size, Image.NEAREST)
-        photo = ImageTk.PhotoImage(image=image)
-        label.configure(image=photo)
-        label.image = photo
         root.after(interval_ms, update_frame)
 
     root.after(0, update_frame)
@@ -379,6 +424,7 @@ def viewer_proc(
         root.mainloop()
     except Exception as exc:  # pragma: no cover - GUI loop exceptions
         print(f"[viewer] encountered an error: {exc}")
+
 
 
 def _monitor_processes(
@@ -465,19 +511,23 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     viewer_args: Optional[tuple] = None
     if args.show_viewer and num_envs:
-        viewer_index = args.viewer_env_index
-        if args.viewer_game:
+        if args.viewer_game is not None:
             try:
-                viewer_index = selected_games.index(args.viewer_game)
-            except ValueError:
+                viewer_indices = [selected_games.index(args.viewer_game)]
+            except ValueError as exc:
                 raise ValueError(
                     f"Requested viewer game '{args.viewer_game}' is not part of the selected game list."
-                ) from None
-        if not (0 <= viewer_index < num_envs):
-            raise ValueError(
-                f"viewer index {viewer_index} is out of range for {num_envs} environment(s)."
-            )
-        viewer_args = (obs_s, shutdown, viewer_index, selected_games, args.viewer_scale, args.viewer_fps)
+                ) from exc
+        elif args.viewer_env_index is not None:
+            viewer_index = args.viewer_env_index
+            if not (0 <= viewer_index < num_envs):
+                raise ValueError(
+                    f"viewer index {viewer_index} is out of range for {num_envs} environment(s)."
+                )
+            viewer_indices = [viewer_index]
+        else:
+            viewer_indices = list(range(num_envs))
+        viewer_args = (obs_s, shutdown, viewer_indices, selected_games, args.viewer_scale, args.viewer_fps)
 
     procs = [mp.Process(**cfg) for cfg in proc_configs]
 
