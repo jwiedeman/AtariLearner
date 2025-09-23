@@ -245,6 +245,10 @@ Checkpoint files are written automatically while the run is in progress.  Use
 `--checkpoint-dir` to pick the output folder, `--checkpoint-interval` to control
 the cadence (in seconds), and `--max-checkpoint-snapshots` to choose how many
 timestamped snapshots are retained alongside the rolling `latest.pt` file.
+If a previous run left a checkpoint in place the agent will automatically reuse
+it so that training can continue from the last session.  Pass `--fresh-agent`
+when you explicitly want to start from scratch and train a new model instead of
+loading the saved weights.
 
 ---
 
@@ -270,6 +274,7 @@ The runner exposes a handful of switches so you can tailor it to the hardware yo
 | `--checkpoint-dir checkpoints` | Directory used to store `latest.pt` and timestamped snapshots. |
 | `--checkpoint-interval 1740` | Seconds between automatic checkpoint saves. |
 | `--max-checkpoint-snapshots 5` | Number of rolling timestamped snapshots to retain. |
+| `--fresh-agent` | Ignore existing checkpoints and start with a newly initialised agent. |
 
 Run `python atari_learner.py --help` to see the complete list and default values.
 
