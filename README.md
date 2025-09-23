@@ -36,10 +36,14 @@ This repository contains the multi-process runner used in the viral demo by **@a
 * Periodically checkpointing the agent by calling its `save`/`load` methods.
 * (Optionally) Streaming video/metrics by delegating to a background recorder process (see `bg_record.py`).
 
-The included reference agent issues random actions and keeps track of a few
-statistics—it is primarily meant to exercise the multiprocessing and shared
-tensor plumbing.  Swap in your own implementation of the `Agent` class when you
-are ready to train a real model.
+The included reference agent is a compact deep Q-learner that trains directly
+from the shared tensors.  It batches Atari RGB observations through a
+convolutional encoder, maintains per-game output heads so that multiple
+environments can specialise, streams data into a replay buffer, and periodically
+writes checkpoints that include optimiser/replay state for resuming runs.  You
+can still replace `myagent.py` with your own implementation, but the shipped
+version is now a practical starting point for experimentation rather than a
+random-action scaffold.
 
 ---
 
@@ -138,29 +142,20 @@ Two helper modules are imported by `atari_learner.py`.  Provide implementations 
 
 ### 4.1 `myagent.py`
 
-The repository now ships with a minimal `Agent` implementation that satisfies
-the API expected by `atari_learner.py`:
+The shipped agent is no longer a random-action scaffold – it is a small but
+fully functioning deep Q-network learner that:
 
-```python
-class Agent:
-    def __init__(self):
-        ...  # allocate networks, buffers, etc.
+* Shares a convolutional encoder across all environments and attaches a
+  dedicated output head to each game so that policies can specialise.
+* Streams the runner's shared tensors into an experience replay buffer,
+  performs TD updates in-place, and periodically syncs a target network.
+* Supports resumable training by checkpointing network weights, optimiser
+  state, replay samples, and bookkeeping counters.
 
-    def act_and_learn(self, obs_tensor: torch.Tensor, info_tensor: torch.Tensor, action_tensor: torch.Tensor) -> None:
-        """Consume environment data and write the next action for every env."""
-
-    def save(self, path: str) -> None:
-        """Persist learner state (e.g. model weights, optimiser state)."""
-
-    def load(self, path: str) -> None:
-        """Restore a previously saved checkpoint."""
-```
-
-The reference agent keeps tensors on whichever device the runner selects
-(preferring the GPU when available), samples random actions, and tracks a
-couple of diagnostic counters.  Replace the body of
-`act_and_learn`/`save`/`load` with your training logic when you are ready to
-experiment with real models.
+The class still exposes the same API (`act_and_learn`, `save`, `load`), making
+it easy to drop in more advanced implementations.  If you prefer a different
+algorithm simply replace `myagent.py` with your own agent while keeping the
+method signatures intact.
 
 ### 4.2 `bg_record.py`
 
@@ -246,7 +241,10 @@ pillow` if you do not already have it in your environment.
 
 The script prints the number of environments, seeds per game, and periodically checks that all child processes are still alive.  When the duration elapses (or you interrupt execution) the shutdown flag is broadcast so every process exits cleanly.
 
-Checkpoint files (`agent.pt` by default) are written to the current working directory every ~29 minutes.  You can change the path or cadence inside `agent_proc`.
+Checkpoint files are written automatically while the run is in progress.  Use
+`--checkpoint-dir` to pick the output folder, `--checkpoint-interval` to control
+the cadence (in seconds), and `--max-checkpoint-snapshots` to choose how many
+timestamped snapshots are retained alongside the rolling `latest.pt` file.
 
 ---
 
@@ -269,6 +267,9 @@ The runner exposes a handful of switches so you can tailor it to the hardware yo
 | `--viewer-env-index 0` | Choose the environment shown in the viewer by index. |
 | `--viewer-scale 2.0` | Scale the viewer window by the provided factor. |
 | `--viewer-fps 30` | Target refresh rate for the viewer window (lower values reduce CPU usage). |
+| `--checkpoint-dir checkpoints` | Directory used to store `latest.pt` and timestamped snapshots. |
+| `--checkpoint-interval 1740` | Seconds between automatic checkpoint saves. |
+| `--max-checkpoint-snapshots 5` | Number of rolling timestamped snapshots to retain. |
 
 Run `python atari_learner.py --help` to see the complete list and default values.
 
