@@ -421,7 +421,7 @@ def viewer_proc(
     else:
         title_suffix = f" – {len(env_indices)} environments"
     root.title(f"AtariLearner Viewer{title_suffix}")
-    root.resizable(False, False)
+    root.resizable(True, True)
 
     if len(env_indices) == 1:
         print(f"[viewer] launching viewer for {env_names[0]} (env {env_indices[0]})")
@@ -429,34 +429,147 @@ def viewer_proc(
         print(f"[viewer] launching viewer for {len(env_indices)} environments")
 
     num_tiles = len(env_indices)
-    num_cols = max(1, math.ceil(math.sqrt(num_tiles)))
-    num_rows = max(1, math.ceil(num_tiles / num_cols))
-
     tiles = []
-    for pos, (env_index, env_name) in enumerate(zip(env_indices, env_names)):
+    tile_padding = 4
+
+    for env_index, env_name in zip(env_indices, env_names):
         frame = tk.Frame(root, borderwidth=1, relief="solid")
-        row = pos // num_cols
-        col = pos % num_cols
-        frame.grid(row=row, column=col, padx=4, pady=4, sticky="nsew")
-
-        image_label = tk.Label(frame)
-        image_label.pack()
-
+        image_label = tk.Label(frame, background="black")
+        image_label.grid(row=0, column=0, sticky="nsew")
         caption = tk.Label(frame, text=f"{env_name} (env {env_index})")
-        caption.pack()
+        caption.grid(row=1, column=0, sticky="ew")
+        frame.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
 
         tiles.append({
             "env_index": env_index,
+            "frame": frame,
             "image_label": image_label,
+            "caption": caption,
+            "target_size": None,
         })
-
-    for r in range(num_rows):
-        root.grid_rowconfigure(r, weight=1)
-    for c in range(num_cols):
-        root.grid_columnconfigure(c, weight=1)
 
     last_frames: List[Optional[np.ndarray]] = [None] * num_tiles
     interval_ms = int(max(1.0, 1000.0 / max(target_fps, 1e-3)))
+
+    root.update_idletasks()
+
+    try:
+        base_height = int(obs_s.shape[1])
+        base_width = int(obs_s.shape[2])
+    except Exception:
+        base_height = base_width = 1
+
+    caption_height = max((tile["caption"].winfo_reqheight() for tile in tiles), default=0)
+
+    initial_cols = max(1, math.ceil(math.sqrt(num_tiles)))
+    initial_rows = max(1, math.ceil(num_tiles / initial_cols))
+    safe_scale = max(scale, 1e-3)
+    base_scaled_width = max(base_width * safe_scale, 1.0)
+    base_scaled_height = max(base_height * safe_scale, 1.0)
+    initial_width = int(initial_cols * base_scaled_width + (initial_cols * 2 * tile_padding))
+    initial_height = int(
+        initial_rows * (base_scaled_height + caption_height) + (initial_rows * 2 * tile_padding)
+    )
+
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    if screen_width > 0 and screen_height > 0:
+        fit_scale = min(screen_width / max(initial_width, 1), screen_height / max(initial_height, 1), 1.0)
+    else:
+        fit_scale = 1.0
+    if fit_scale < 1.0:
+        initial_width = int(initial_width * fit_scale)
+        initial_height = int(initial_height * fit_scale)
+
+    root.geometry(f"{max(1, initial_width)}x{max(1, initial_height)}")
+
+    current_layout = {"cols": 0, "rows": 0}
+    current_target_size: tuple[int, int] | None = None
+    layout_pending = False
+
+    def apply_layout() -> None:
+        nonlocal layout_pending, current_target_size
+        layout_pending = False
+        available_width = max(root.winfo_width(), 1)
+        available_height = max(root.winfo_height(), 1)
+
+        best_cols = 1
+        best_rows = num_tiles
+        best_area = -1.0
+        best_size: tuple[int, int] | None = None
+
+        for cols in range(1, num_tiles + 1):
+            rows = math.ceil(num_tiles / cols)
+            total_pad_x = cols * 2 * tile_padding
+            total_pad_y = rows * 2 * tile_padding
+            cell_width = (available_width - total_pad_x) / max(cols, 1)
+            cell_height = (available_height - total_pad_y) / max(rows, 1)
+            if cell_width <= 1 or cell_height <= 1:
+                continue
+            image_height_available = max(cell_height - caption_height, 1.0)
+            width_scale = cell_width / max(base_scaled_width, 1)
+            height_scale = image_height_available / max(base_scaled_height, 1)
+            scale_factor = min(width_scale, height_scale)
+            if scale_factor <= 0:
+                continue
+            target_width = int(max(1, base_scaled_width * scale_factor))
+            target_height = int(max(1, base_scaled_height * scale_factor))
+            tile_area = target_width * target_height
+            if tile_area > best_area:
+                best_area = tile_area
+                best_cols = cols
+                best_rows = rows
+                best_size = (target_width, target_height)
+
+        if best_size is None:
+            best_size = (
+                int(max(1, base_scaled_width)),
+                int(max(1, base_scaled_height)),
+            )
+
+        if current_layout["cols"] != best_cols or current_layout["rows"] != best_rows:
+            # Clear existing weight configuration.
+            for r in range(current_layout["rows"]):
+                root.grid_rowconfigure(r, weight=0)
+            for c in range(current_layout["cols"]):
+                root.grid_columnconfigure(c, weight=0)
+
+            for tile in tiles:
+                tile_frame = tile["frame"]
+                tile_frame.grid_forget()
+
+            for index, tile in enumerate(tiles):
+                row = index // best_cols
+                col = index % best_cols
+                tile["frame"].grid(
+                    row=row,
+                    column=col,
+                    padx=tile_padding,
+                    pady=tile_padding,
+                    sticky="nsew",
+                )
+
+            for r in range(best_rows):
+                root.grid_rowconfigure(r, weight=1)
+            for c in range(best_cols):
+                root.grid_columnconfigure(c, weight=1)
+
+            current_layout["cols"] = best_cols
+            current_layout["rows"] = best_rows
+
+        current_target_size = best_size
+        for tile in tiles:
+            tile["target_size"] = current_target_size
+
+    def schedule_layout(_event=None) -> None:
+        nonlocal layout_pending
+        if not layout_pending:
+            layout_pending = True
+            root.after_idle(apply_layout)
+
+    schedule_layout()
+    root.bind("<Configure>", schedule_layout)
 
     def update_frame() -> None:
         if shutdown.is_set():
@@ -484,13 +597,27 @@ def viewer_proc(
                 frame_to_show = np.zeros((1, 1, 3), dtype=np.uint8)
 
             image = Image.fromarray(frame_to_show)
-            if scale != 1.0:
-                new_size = (
-                    max(1, int(image.width * scale)),
-                    max(1, int(image.height * scale)),
+            target_size = tile.get("target_size")
+            if target_size is not None and all(val > 0 for val in target_size):
+                target_width, target_height = target_size
+                display_image = Image.new("RGB", (target_width, target_height))
+                width_scale = target_width / max(image.width, 1)
+                height_scale = target_height / max(image.height, 1)
+                scale_factor = min(width_scale, height_scale)
+                resized = image.resize(
+                    (
+                        max(1, int(image.width * scale_factor)),
+                        max(1, int(image.height * scale_factor)),
+                    ),
+                    Image.NEAREST,
                 )
-                image = image.resize(new_size, Image.NEAREST)
-            photo = ImageTk.PhotoImage(image=image)
+                paste_x = max(0, (target_width - resized.width) // 2)
+                paste_y = max(0, (target_height - resized.height) // 2)
+                display_image.paste(resized, (paste_x, paste_y))
+            else:
+                display_image = image
+
+            photo = ImageTk.PhotoImage(image=display_image)
             tile_label = tile["image_label"]
             tile_label.configure(image=photo)
             tile_label.image = photo
