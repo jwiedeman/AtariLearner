@@ -2,7 +2,7 @@
 
 This repository contains the multi-process runner used in the viral demo by **@actualhog** ("one NN learns every Atari game at once in realtime from scratch in one hour on a 4090").  The goal of this document is to outline everything that is required to boot the runner locally so that you can plug in your own agent implementation and try to reproduce the experiment.
 
-> **TL;DR** – this repo only ships the orchestration script.  You must provide your own `myagent.py` and `bg_record.py` modules (described below) and an Atari-capable build of Gymnasium/ALE.  Once the prerequisites are met you can launch the full suite of 57 Atari environments with:
+> **TL;DR** – this repo ships the orchestration script **and** lightweight reference implementations of `myagent.py` and `bg_record.py`.  Feel free to replace them with your own learner/recorder, but the included versions make it possible to boot the runner immediately once you install an Atari-capable build of Gymnasium/ALE.  Launch the full suite of 57 Atari environments with:
 >
 > ```bash
 > export myseed=1
@@ -28,7 +28,10 @@ This repository contains the multi-process runner used in the viral demo by **@a
 * Periodically checkpointing the agent by calling its `save`/`load` methods.
 * (Optionally) Streaming video/metrics by delegating to a background recorder process (see `bg_record.py`).
 
-The actual learning algorithm is **not** in this repository—you are expected to provide your own implementation of the `Agent` class.
+The included reference agent issues random actions and keeps track of a few
+statistics—it is primarily meant to exercise the multiprocessing and shared
+tensor plumbing.  Swap in your own implementation of the `Agent` class when you
+are ready to train a real model.
 
 ---
 
@@ -87,39 +90,37 @@ Two helper modules are imported by `atari_learner.py`.  Provide implementations 
 
 ### 4.1 `myagent.py`
 
-Define an `Agent` class with the following API:
+The repository now ships with a minimal `Agent` implementation that satisfies
+the API expected by `atari_learner.py`:
 
 ```python
 class Agent:
     def __init__(self):
-        ...  # build networks, buffers, etc.
+        ...  # allocate networks, buffers, etc.
 
     def act_and_learn(self, obs_tensor: torch.Tensor, info_tensor: torch.Tensor, action_tensor: torch.Tensor) -> None:
-        """Read the latest RGB observations + episode stats, write actions back to `action_tensor`, and update learner state."""
+        """Consume environment data and write the next action for every env."""
 
     def save(self, path: str) -> None:
-        """Checkpoint model weights and optimizer state to disk."""
+        """Persist learner state (e.g. model weights, optimiser state)."""
 
     def load(self, path: str) -> None:
         """Restore a previously saved checkpoint."""
 ```
 
-The runner keeps `obs_tensor` and `action_tensor` on the GPU, so your agent should also operate on the GPU to avoid device transfers.  The helper tensor `info_tensor` stores per-environment statistics in the format `(cumulative_reward, frame_count, terminated_flag, truncated_flag)`.
+The reference agent keeps all tensors on the GPU, samples random actions, and
+tracks a couple of diagnostic counters.  Replace the body of
+`act_and_learn`/`save`/`load` with your training logic when you are ready to
+experiment with real models.
 
 ### 4.2 `bg_record.py`
 
-This module is optional but highly recommended for debugging.  It is expected to expose:
-
-```python
-def bind_logger(game_id: str, env_index: int, info_tensor: torch.Tensor) -> None: ...
-def log_step(action: int, obs: np.ndarray, reward: float, terminated: bool, truncated: bool) -> None: ...
-def log_close() -> None: ...
-
-def bg_record_proc(obs_tensor, info_tensor, shutdown_event, game_list, start_time):
-    """Background process that consumes shared tensors and produces a video/metrics file."""
-```
-
-You can stub these functions out (no-ops) if you only want the core training loop.
+`atari_learner.py` also imports a background recorder module.  The built-in
+version focuses on metrics: environment workers call `bind_logger`,
+`log_step`, and `log_close` to update a shared CUDA tensor, while the
+`bg_record_proc` process periodically prints aggregate statistics.  Power users
+can swap in their own recorder that writes gameplay video, streams metrics, or
+integrates with experiment tracking services.
 
 ---
 
