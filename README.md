@@ -92,6 +92,44 @@ pip install av pillow
 
 On Debian/Ubuntu you can obtain FFmpeg via `sudo apt-get install ffmpeg`.
 
+### macOS (Apple Silicon or Intel) setup
+
+The commands above also work on macOS, but a couple of mac-specific notes can
+save you some friction:
+
+1. Use the system `python3` binary (or a Homebrew install) when creating the
+   virtual environment:
+
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   python -m pip install --upgrade pip
+   ```
+
+2. Install the universal (CPU + Metal/MPS) build of PyTorch that ships on PyPI.
+   It runs on Apple Silicon out of the box and also supports Intel Macs:
+
+   ```bash
+   pip install torch torchvision
+   ```
+
+   If you prefer the Intel-only wheel, replace the previous line with
+   `pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu`.
+
+3. Install the Atari extras and supporting libraries exactly as shown earlier:
+
+   ```bash
+   pip install "gymnasium[atari,accept-rom-license]"
+   pip install numpy
+   pip install av pillow
+   ```
+
+4. Optional: install FFmpeg for video capture via Homebrew with
+   `brew install ffmpeg`.
+
+When running under the default `zsh` shell, paste each command individually (or
+remove the leading `#` comments) to avoid "parse error near `)`" messages.
+
 ---
 
 ## 4. Required Local Modules
@@ -149,6 +187,18 @@ export myseed=20240925
 export RUNDURATIONSECONDS=$((45*60))  # 45 minute session
 python atari_learner.py
 ```
+
+On macOS laptops you will typically run a single training environment at a
+time.  Use a shorter duration and explicitly pin the runner to the CPU:
+
+```bash
+export myseed=1
+export RUNDURATIONSECONDS=$((5*60))
+python atari_learner.py --game ALE/Pong-v5 --device cpu --num-procs 1
+```
+
+The `--game` flag selects one Atari title, while `--num-procs 1` keeps the
+process count low so the run fits comfortably on a MacBook.
 
 ---
 
