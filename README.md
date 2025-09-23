@@ -200,6 +200,19 @@ python atari_learner.py --game ALE/Pong-v5 --device cpu --num-procs 1
 The `--game` flag selects one Atari title, while `--num-procs 1` keeps the
 process count low so the run fits comfortably on a MacBook.
 
+Want to saturate a CPU-only machine with multiple copies of the same title?
+Add `--instances-per-game 10` (or any positive integer) to replicate each
+selected game.  Combined with `--show-viewer` the Tkinter window tiles every
+instance so you can watch them side by side:
+
+```bash
+python atari_learner.py --game ALE/Pong-v5 --device cpu --instances-per-game 10 --show-viewer
+```
+
+By default the runner spawns up to one worker process per environment (capped
+at 16 unless you override `--num-procs`), keeping each instance isolated and
+matching the viewer layout.
+
 ---
 
 ## 6. Running the Suite
@@ -209,6 +222,7 @@ process count low so the run fits comfortably on a MacBook.
    * **Full suite:** run `python atari_learner.py` with no extra flags.
    * **Single environment:** add `--game ALE/Pong-v5` (or any other ID from the Gymnasium registry).
    * **Custom list:** provide multiple IDs with `--games ALE/Pong-v5 ALE/Breakout-v5`.
+   * **Multiple copies per game:** append `--instances-per-game 10` to run ten instances of each selected title in parallel.
 3. Pick a device with `--device {auto,cuda,cpu}`.  The default `auto` uses CUDA when available and falls back to CPU otherwise.
 4. (Optional) Tune parallelism with `--num-procs` and the frame rate with `--fps`/`--max-episode-steps`.  These replace the manual edits that were previously required.
 5. Launch the runner.  For example, to run Pong and Breakout on the CPU:
@@ -246,6 +260,7 @@ The runner exposes a handful of switches so you can tailor it to the hardware yo
 | `--games ...` | Provide an explicit list of Gymnasium environment IDs to run simultaneously. |
 | `--device {auto,cuda,cpu}` | Choose where the shared tensors live.  `auto` prefers CUDA when available. |
 | `--num-procs N` | Number of environment worker processes.  Defaults to `min(16, number of environments)`. |
+| `--instances-per-game 4` | Replicate each selected title the specified number of times (defaults to 1). |
 | `--fps 30` | Target frame rate per environment. |
 | `--max-episode-steps 10000` | Override the maximum episode length passed to Gymnasium. |
 | `--start-method spawn` | Force a specific multiprocessing start method (Linux defaults to `forkserver`, macOS to `spawn`). |
