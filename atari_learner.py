@@ -160,6 +160,27 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
             "Lower values reduce CPU usage (default: 30)."
         ),
     )
+    parser.add_argument(
+        "--checkpoint-dir",
+        type=str,
+        default="checkpoints",
+        help="Directory where agent checkpoints are stored (default: checkpoints).",
+    )
+    parser.add_argument(
+        "--checkpoint-interval",
+        type=int,
+        default=29 * 60,
+        help="Seconds between automatic agent checkpoints (default: 1740).",
+    )
+    parser.add_argument(
+        "--max-checkpoint-snapshots",
+        type=int,
+        default=5,
+        help=(
+            "Maximum number of rolling checkpoint snapshots retained alongside the latest file "
+            "(default: 5)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.game and args.games:
@@ -167,6 +188,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
     if args.instances_per_game < 1:
         parser.error("--instances-per-game must be a positive integer")
+
+    if args.checkpoint_interval <= 0:
+        parser.error("--checkpoint-interval must be a positive integer")
+
+    if args.max_checkpoint_snapshots < 0:
+        parser.error("--max-checkpoint-snapshots must be >= 0")
 
     return args
 
@@ -297,20 +324,31 @@ def env_proc(first_start_at, game_chunk, offset, obs_s, act_s, info_s, shutdown,
     for t in threads: t.start()
     for t in threads: t.join()
 
-def agent_proc(obs_s, act_s, info_s, shutdown):
+def agent_proc(obs_s, act_s, info_s, shutdown, game_ids, checkpoint_dir, checkpoint_interval, max_snapshots):
     seed('agent', 0)
     from myagent import Agent
-    agent = Agent()
 
-    save_path = "agent.pt"
-    try: # only first load attempt allowed to fail
-        print(f"loading from {save_path=}")
-        agent.load(save_path)
-    except Exception: pass
-    print(f"saving to {save_path=}")
-    agent.save(save_path)
-    print(f"loading from {save_path=}")
-    agent.load(save_path) # success required
+    checkpoint_dir = os.path.abspath(checkpoint_dir)
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    checkpoint_path = os.path.join(checkpoint_dir, "latest.pt")
+
+    agent = Agent(game_ids=game_ids, max_snapshots=max_snapshots)
+    agent.configure_envs(game_ids)
+
+    if os.path.exists(checkpoint_path):
+        try:
+            print(f"loading existing checkpoint from {checkpoint_path}")
+            agent.load(checkpoint_path)
+            agent.configure_envs(game_ids)
+            print("checkpoint load successful")
+        except Exception as exc:
+            print(f"failed to load checkpoint {checkpoint_path}: {exc}")
+
+    try:
+        print(f"saving initial checkpoint to {checkpoint_path}")
+        agent.save(checkpoint_path)
+    except Exception as exc:
+        print(f"unable to write initial checkpoint {checkpoint_path}: {exc}")
 
     last_save_time = time.time()
     while not shutdown.is_set():
@@ -319,12 +357,14 @@ def agent_proc(obs_s, act_s, info_s, shutdown):
         # NOTE: THE act_and_learn ARGUMENTS HAVE CHANGED
         # EACH ROW IN info_s IS LIKE (acc_reward, acc_frames, acc_term, acc_trunc)
         agent.act_and_learn(obs_s, info_s.clone(), act_s)
-        if time.time() - last_save_time > 29*60:
-            print(f"saving to {save_path=}")
-            agent.save(save_path)
-            print(f"loading from {save_path=}")
-            agent.load(save_path)
-            last_save_time = time.time()
+
+        if time.time() - last_save_time >= checkpoint_interval:
+            try:
+                print(f"saving checkpoint to {checkpoint_path}")
+                agent.save(checkpoint_path)
+                last_save_time = time.time()
+            except Exception as exc:
+                print(f"failed to save checkpoint {checkpoint_path}: {exc}")
 
 
 def _trim_black_borders(frame: np.ndarray) -> np.ndarray:
@@ -529,7 +569,21 @@ def main(argv: Sequence[str] | None = None) -> None:
     info_s = torch.zeros((num_envs, 4), dtype=torch.float32, device=device).share_memory_()
     shutdown = mp.Event()
 
-    proc_configs = [{'target': agent_proc, 'args': (obs_s, act_s, info_s, shutdown)}]
+    proc_configs = [
+        {
+            'target': agent_proc,
+            'args': (
+                obs_s,
+                act_s,
+                info_s,
+                shutdown,
+                selected_games,
+                args.checkpoint_dir,
+                int(args.checkpoint_interval),
+                int(args.max_checkpoint_snapshots),
+            ),
+        }
+    ]
 
     num_procs = args.num_procs or min(DEFAULT_NUM_PROCS, num_envs)
     num_procs = max(1, num_procs)
