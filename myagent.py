@@ -302,8 +302,8 @@ class Agent:
     MAX_GRAD_NORM = 10.0
     EPSILON_START = 1.0
     EPSILON_FINAL = 0.05
-    EPSILON_DECAY = 75_000
-    UPDATES_PER_STEP = 2
+    EPSILON_DECAY = 150_000
+    UPDATES_PER_STEP = 1
 
     def __init__(self, game_ids: Optional[Sequence[str]] = None, max_snapshots: int = 5) -> None:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
