@@ -291,18 +291,19 @@ class Agent:
     MAX_ACTIONS: int = 18
     OBS_SHAPE = (3, 84, 84)
 
-    # Training hyper-parameters (kept intentionally conservative).
-    LEARNING_RATE = 1e-4
+    # Training hyper-parameters tuned for faster early learning.
+    LEARNING_RATE = 2.5e-4
     REPLAY_CAPACITY = 50_000
     REPLAY_SNAPSHOT_LIMIT = 5_000
     BATCH_SIZE = 64
     GAMMA = 0.99
-    LEARNING_STARTS = 2_000
+    LEARNING_STARTS = 1_000
     TARGET_UPDATE_INTERVAL = 2_000
     MAX_GRAD_NORM = 10.0
     EPSILON_START = 1.0
     EPSILON_FINAL = 0.05
-    EPSILON_DECAY = 150_000
+    EPSILON_DECAY = 75_000
+    UPDATES_PER_STEP = 2
 
     def __init__(self, game_ids: Optional[Sequence[str]] = None, max_snapshots: int = 5) -> None:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -544,27 +545,28 @@ class Agent:
         if self.replay.size < max(self.BATCH_SIZE, self.LEARNING_STARTS):
             return
 
-        batch = self.replay.sample(self.BATCH_SIZE, self._cpu_rng, self.device)
-        states, actions, rewards, next_states, dones, head_indices = batch
+        for _ in range(self.UPDATES_PER_STEP):
+            batch = self.replay.sample(self.BATCH_SIZE, self._cpu_rng, self.device)
+            states, actions, rewards, next_states, dones, head_indices = batch
 
-        head_keys = [self._head_index_to_game[int(idx)] for idx in head_indices.tolist()]
+            head_keys = [self._head_index_to_game[int(idx)] for idx in head_indices.tolist()]
 
-        q_values = self.policy(states, head_keys).gather(1, actions.view(-1, 1)).squeeze(1)
+            q_values = self.policy(states, head_keys).gather(1, actions.view(-1, 1)).squeeze(1)
 
-        with torch.no_grad():
-            next_q = self.target_policy(next_states, head_keys).max(dim=1).values
-            target = rewards + (1.0 - dones) * self.GAMMA * next_q
+            with torch.no_grad():
+                next_q = self.target_policy(next_states, head_keys).max(dim=1).values
+                target = rewards + (1.0 - dones) * self.GAMMA * next_q
 
-        loss = F.smooth_l1_loss(q_values, target)
+            loss = F.smooth_l1_loss(q_values, target)
 
-        self.optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        nn.utils.clip_grad_norm_(self.policy.parameters(), self.MAX_GRAD_NORM)
-        self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            nn.utils.clip_grad_norm_(self.policy.parameters(), self.MAX_GRAD_NORM)
+            self.optimizer.step()
 
-        self.state.updates += 1
-        if self.state.updates % self.TARGET_UPDATE_INTERVAL == 0:
-            self._sync_target_network()
+            self.state.updates += 1
+            if self.state.updates % self.TARGET_UPDATE_INTERVAL == 0:
+                self._sync_target_network()
 
     # ------------------------------------------------------------------
     # Persistence helpers
