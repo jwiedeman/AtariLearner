@@ -77,7 +77,7 @@ Each guide also enumerates "optimal" single-game commands tuned for the most com
 | Python | 3.10+ | Matches current Gymnasium / PyTorch releases. |
 | CUDA toolkit & drivers | 12.x (or 11.8+) | Needed for the PyTorch GPU build. |
 | PyTorch | Latest stable with CUDA support | Install from [pytorch.org](https://pytorch.org/get-started/locally/). |
-| Gymnasium | `gymnasium[atari,accept-rom-license]` ≥ 0.29 | Provides the ALE Atari environments with RGB observations. |
+| Gymnasium | `gymnasium[atari]` ≥ 1.2 + `autorom[accept-rom-license]` | Provides the ALE Atari environments and installs the ROMs. |
 | ALE-Py | Installed automatically via Gymnasium extra | Required backend for Atari ROMs. |
 | NumPy | Latest | Array manipulation. |
 | FFmpeg | Optional but recommended | Needed by the sample `bg_record.py` implementation for video capture. |
@@ -94,8 +94,11 @@ pip install --upgrade pip
 # Install the CUDA build of PyTorch – replace cu121 with the wheel that matches your driver.
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
-# Install Gymnasium with Atari extras (downloads the ROMs on first run; accept the license prompt).
-pip install "gymnasium[atari,accept-rom-license]"
+# Install Gymnasium with Atari extras and download the ROM set via AutoROM.
+pip install "gymnasium[atari]" autorom[accept-rom-license]
+
+# AutoROM installs the ROM bundle after you accept the licence once.
+AutoROM --accept-license
 
 pip install numpy
 # Optional extras for video logging
@@ -131,7 +134,8 @@ save you some friction:
 3. Install the Atari extras and supporting libraries exactly as shown earlier:
 
    ```bash
-   pip install "gymnasium[atari,accept-rom-license]"
+   pip install "gymnasium[atari]" autorom[accept-rom-license]
+   AutoROM --accept-license
    pip install numpy
    pip install av pillow
    ```

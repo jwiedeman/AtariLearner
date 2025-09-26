@@ -30,7 +30,10 @@ Install the universal PyTorch build (includes CPU + Metal support), Gymnasium, a
 
 ```bash
 pip install torch torchvision
-pip install "gymnasium[atari,accept-rom-license]" numpy av pillow
+pip install "gymnasium[atari]" autorom[accept-rom-license] numpy av pillow
+
+# Download the ROMs once (AutoROM prompts for the licence if you omit --accept-license).
+AutoROM --accept-license
 ```
 
 Optional: install FFmpeg via Homebrew for the sample recorder module:
@@ -39,7 +42,7 @@ Optional: install FFmpeg via Homebrew for the sample recorder module:
 brew install ffmpeg
 ```
 
-Accept the ROM licence prompt once with:
+Verify that Gymnasium can load an Atari environment:
 
 ```bash
 python -c "import gymnasium as gym; gym.make('ALE/Pong-v5')"
