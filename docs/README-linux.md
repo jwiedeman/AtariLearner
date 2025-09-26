@@ -36,10 +36,13 @@ python -m pip install --upgrade pip wheel setuptools
 # Replace cu121 with the correct CUDA tag for your driver.
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
-pip install "gymnasium[atari,accept-rom-license]" numpy av pillow
+pip install "gymnasium[atari]" autorom[accept-rom-license] numpy av pillow
+
+# Download the ROM bundle once (AutoROM accepts the licence on your behalf).
+AutoROM --accept-license
 ```
 
-Accept the ROM license prompt the first time Gymnasium loads an Atari environment.  You can pre-download the ROMs with:
+Verify that Gymnasium can locate the ROM set:
 
 ```bash
 python -c "import gymnasium as gym; gym.make('ALE/Pong-v5')"

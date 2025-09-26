@@ -38,8 +38,15 @@ python3 -m venv .venv
 source .venv/bin/activate   # or: . .venv/bin/activate
 python -m pip install --upgrade pip wheel setuptools
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-pip install "gymnasium[atari,accept-rom-license]" numpy av pillow
+pip install "gymnasium[atari]" autorom[accept-rom-license] numpy av pillow
+
+# Download the ROM set once so the ALE namespace is registered.
+AutoROM --accept-license
 ```
+
+> **Tip:** If you see `source: not found`, you are in `/bin/sh`. Run `bash`
+> first or use `. .venv/bin/activate` to source the activation script with POSIX
+> `.`.
 
 Quick sanity check (optional but recommended):
 
@@ -143,7 +150,10 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip wheel setuptools
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-pip install "gymnasium[atari,accept-rom-license]" numpy av pillow
+pip install "gymnasium[atari]" autorom[accept-rom-license] numpy av pillow
+
+# AutoROM downloads the ROMs and records the licence acceptance once.
+AutoROM --accept-license
 ```
 
 Export environment variables for the current PowerShell session:
@@ -153,7 +163,7 @@ $env:myseed = 2024
 $env:RUNDURATIONSECONDS = 3600
 ```
 
-Because Gymnasium downloads ROMs on first use, trigger the prompt once:
+Verify the install once AutoROM has finished:
 
 ```powershell
 python -c "import gymnasium as gym; gym.make('ALE/Pong-v5')"
