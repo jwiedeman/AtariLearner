@@ -8,25 +8,48 @@ This document explains how to run AtariLearner on Windows 11 using either WSL2 (
 
 * Windows 11 22H2 or later.
 * NVIDIA GPU with drivers that support WSL2 CUDA (version 522+).
-* Installed WSL2 with Ubuntu 22.04: `wsl --install -d Ubuntu`.
+* Installed WSL2 with Ubuntu 22.04 or 24.04: `wsl --install -d Ubuntu`.
 * Windows Terminal (optional but convenient).
 
 Inside the Ubuntu shell:
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential python3 python3-venv python3-dev ffmpeg
+sudo apt install -y \
+  build-essential \
+  python3 python3-venv python3-dev python3-pip \
+  ffmpeg
 ```
 
-Create and activate a Python virtual environment in the cloned repository:
+If `pip` is still missing (older Ubuntu images ship without it), bootstrap it
+once:
+
+```bash
+python3 -m ensurepip --upgrade
+```
+
+Create and activate a Python virtual environment in the cloned repository. The
+commands below assume you are using **bash** inside WSL (start it explicitly
+with `bash` if your default shell is `/bin/sh`).
 
 ```bash
 cd /mnt/c/Users/<you>/AtariLearner
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # or: . .venv/bin/activate
 python -m pip install --upgrade pip wheel setuptools
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install "gymnasium[atari,accept-rom-license]" numpy av pillow
+```
+
+Quick sanity check (optional but recommended):
+
+```bash
+python -m pip --version
+python - <<'PY'
+import torch, gymnasium
+print('Torch:', torch.__version__)
+print('Gymnasium:', gymnasium.__version__)
+PY
 ```
 
 Accept the Atari ROM licence once:
