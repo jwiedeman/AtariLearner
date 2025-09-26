@@ -63,6 +63,14 @@ As of this update the orchestrator can also run on CPU-only systems.  Use `--gam
 
 ## 3. Software Requirements
 
+Looking for platform-specific setup guides?  The `docs/` folder now contains step-by-step READMEs tailored to the major desktop operating systems:
+
+* [Linux instructions](docs/README-linux.md) – Ubuntu-focused guide with GPU-oriented recipes.
+* [macOS instructions](docs/README-macos.md) – Apple Silicon and Intel tips plus MPS-ready commands.
+* [Windows instructions](docs/README-windows.md) – WSL2-first walkthrough with native PowerShell alternatives.
+
+Each guide also enumerates "optimal" single-game commands tuned for the most common hardware configurations on that platform.
+
 | Component | Recommended Version | Notes |
 |-----------|--------------------|-------|
 | Operating system | Linux (Ubuntu 22.04 tested), macOS 14+ | Uses `forkserver` on Linux and automatically falls back to `spawn` on macOS. |
