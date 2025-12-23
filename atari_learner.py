@@ -189,6 +189,15 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
             "Useful when you explicitly want to train a new model."
         ),
     )
+    parser.add_argument(
+        "--tensorboard-log",
+        type=str,
+        default=None,
+        help=(
+            "Directory for TensorBoard logs.  When set, training metrics are recorded "
+            "and can be visualised with 'tensorboard --logdir <path>'."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.game and args.games:
@@ -342,6 +351,7 @@ def agent_proc(
     checkpoint_interval,
     max_snapshots,
     fresh_agent,
+    tensorboard_log,
 ):
     seed('agent', 0)
     from myagent import Agent
@@ -350,7 +360,7 @@ def agent_proc(
     os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_path = os.path.join(checkpoint_dir, "latest.pt")
 
-    agent = Agent(game_ids=game_ids, max_snapshots=max_snapshots)
+    agent = Agent(game_ids=game_ids, max_snapshots=max_snapshots, log_dir=tensorboard_log)
     agent.configure_envs(game_ids)
 
     if not fresh_agent and os.path.exists(checkpoint_path):
@@ -731,6 +741,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 int(args.checkpoint_interval),
                 int(args.max_checkpoint_snapshots),
                 bool(args.fresh_agent),
+                args.tensorboard_log,
             ),
         }
     ]

@@ -154,19 +154,25 @@ Two helper modules are imported by `atari_learner.py`.  Provide implementations 
 
 ### 4.1 `myagent.py`
 
-The shipped agent is no longer a random-action scaffold – it is a small but
-fully functioning deep Q-network learner that:
+The shipped agent is a production-ready **Double DQN** implementation that
+follows best practices from the reinforcement learning literature:
 
-* Shares a convolutional encoder across all environments and attaches a
-  dedicated output head to each game so that policies can specialise.
-* Streams the runner's shared tensors into an experience replay buffer,
-  performs TD updates in-place, and periodically syncs a target network.
-* Supports resumable training by checkpointing network weights, optimiser
-  state, replay samples, and bookkeeping counters.
+* **Double DQN** (van Hasselt et al., 2016): Uses the policy network to select
+  actions and the target network to evaluate them, reducing overestimation bias
+  inherent in standard Q-learning.
+* **Reward clipping**: Clips rewards to `[-1, 1]` to stabilise learning across
+  games with vastly different reward scales (critical for multi-game training).
+* **Multi-head architecture**: Shares a convolutional encoder across all
+  environments while maintaining dedicated output heads for each game.
+* **Standard hyperparameters**: Epsilon decays over 1M steps (not 75K), uses a
+  500K replay buffer, and updates the target network every 10K steps.
+* **TensorBoard integration**: Optional logging of training loss, Q-values,
+  epsilon, and per-game episode metrics.
+* **Resumable training**: Checkpoints include network weights, optimiser state,
+  replay samples, and bookkeeping counters.
 
-The class still exposes the same API (`act_and_learn`, `save`, `load`), making
-it easy to drop in more advanced implementations.  If you prefer a different
-algorithm simply replace `myagent.py` with your own agent while keeping the
+The class exposes the standard API (`act_and_learn`, `save`, `load`, `close`),
+making it straightforward to swap in alternative algorithms while keeping the
 method signatures intact.
 
 ### 4.2 `bg_record.py`
@@ -287,10 +293,42 @@ The runner exposes a handful of switches so you can tailor it to the hardware yo
 | `--checkpoint-interval 1740` | Seconds between automatic checkpoint saves. |
 | `--max-checkpoint-snapshots 5` | Number of rolling timestamped snapshots to retain. |
 | `--fresh-agent` | Ignore existing checkpoints and start with a newly initialised agent. |
+| `--tensorboard-log runs/` | Enable TensorBoard logging to the specified directory. |
 
 Run `python atari_learner.py --help` to see the complete list and default values.
 
-## 8. Troubleshooting & Tips
+---
+
+## 8. TensorBoard Logging
+
+The agent supports optional TensorBoard integration for training visualisation.
+Enable logging by specifying a directory with the `--tensorboard-log` flag:
+
+```bash
+python atari_learner.py --tensorboard-log runs/experiment_1
+```
+
+Start the TensorBoard server in a separate terminal:
+
+```bash
+tensorboard --logdir runs/
+```
+
+Navigate to `http://localhost:6006` to view training curves.  The logged
+metrics include:
+
+| Metric | Description |
+|--------|-------------|
+| `train/loss` | Huber (smooth L1) loss averaged over updates |
+| `train/epsilon` | Current exploration rate |
+| `train/avg_q_value` | Mean Q-value of the sampled batch |
+| `train/replay_size` | Number of transitions stored in replay |
+| `train/total_steps` | Total environment steps processed |
+| `train/episodes` | Total episodes completed |
+| `episode/<game>/reward` | Episode return for each game |
+| `episode/<game>/length` | Episode length for each game |
+
+## 9. Troubleshooting & Tips
 
 * **First-run ROM download:** The `gymnasium[atari]` extra will prompt you to accept the ROM license the first time you create an Atari environment.  If you are running headless, pre-download the ROMs by running `python -c "import gymnasium as gym; gym.make('ALE/Pong-v5')"` once interactively.
 * **CUDA out of memory:** Reduce `--num-procs`, lower the resolution of the shared observation tensor, or decrease the number of simultaneous games by selecting a smaller set with `--games`.
@@ -300,7 +338,7 @@ Run `python atari_learner.py --help` to see the complete list and default values
 
 ---
 
-## 9. Credits
+## 10. Credits
 
 * Original concept and demo by [@actualhog](https://twitter.com/actualhog).
 * Inspired by John Carmack's discussion on real-time learning.
