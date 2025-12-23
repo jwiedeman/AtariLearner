@@ -358,29 +358,32 @@ def agent_proc(
 
     checkpoint_dir = os.path.abspath(checkpoint_dir)
     os.makedirs(checkpoint_dir, exist_ok=True)
-    checkpoint_path = os.path.join(checkpoint_dir, "latest.pt")
 
-    agent = Agent(game_ids=game_ids, max_snapshots=max_snapshots, log_dir=tensorboard_log)
+    # Handle --fresh-agent by clearing per-game checkpoints
+    if fresh_agent:
+        import shutil
+        for game_id in game_ids:
+            safe_name = game_id.replace("/", "_").replace(":", "_")
+            game_dir = os.path.join(checkpoint_dir, safe_name)
+            if os.path.exists(game_dir):
+                print(f"--fresh-agent: removing existing checkpoints for {game_id}")
+                shutil.rmtree(game_dir)
+
+    # Create agent - it auto-loads best/latest checkpoints per game
+    agent = Agent(
+        game_ids=game_ids,
+        max_snapshots=max_snapshots,
+        log_dir=tensorboard_log,
+        checkpoint_dir=checkpoint_dir,
+    )
     agent.configure_envs(game_ids)
 
-    if not fresh_agent and os.path.exists(checkpoint_path):
-        try:
-            print(f"loading existing checkpoint from {checkpoint_path}")
-            agent.load(checkpoint_path)
-            agent.configure_envs(game_ids)
-            print("checkpoint load successful")
-        except Exception as exc:
-            print(f"failed to load checkpoint {checkpoint_path}: {exc}")
-    elif fresh_agent and os.path.exists(checkpoint_path):
-        print(
-            "--fresh-agent specified: existing checkpoint will be ignored and a new model will be initialised"
-        )
-
+    # Save initial state for all games
     try:
-        print(f"saving initial checkpoint to {checkpoint_path}")
-        agent.save(checkpoint_path)
+        print(f"[Agent] Saving initial checkpoints to {checkpoint_dir}/")
+        agent.save(checkpoint_dir)
     except Exception as exc:
-        print(f"unable to write initial checkpoint {checkpoint_path}: {exc}")
+        print(f"[Agent] Unable to write initial checkpoints: {exc}")
 
     last_save_time = time.time()
     while not shutdown.is_set():
@@ -392,11 +395,11 @@ def agent_proc(
 
         if time.time() - last_save_time >= checkpoint_interval:
             try:
-                print(f"saving checkpoint to {checkpoint_path}")
-                agent.save(checkpoint_path)
+                print(f"[Agent] Saving checkpoints to {checkpoint_dir}/")
+                agent.save(checkpoint_dir)
                 last_save_time = time.time()
             except Exception as exc:
-                print(f"failed to save checkpoint {checkpoint_path}: {exc}")
+                print(f"[Agent] Failed to save checkpoints: {exc}")
 
 
 def _trim_black_borders(frame: np.ndarray) -> np.ndarray:

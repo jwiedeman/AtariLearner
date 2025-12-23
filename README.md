@@ -154,26 +154,33 @@ Two helper modules are imported by `atari_learner.py`.  Provide implementations 
 
 ### 4.1 `myagent.py`
 
-The shipped agent is a production-ready **Double DQN** implementation that
-follows best practices from the reinforcement learning literature:
+The shipped agent is an **ensemble of per-game Double DQN models**, where each
+game gets its own independent neural network.  This design enables:
 
-* **Double DQN** (van Hasselt et al., 2016): Uses the policy network to select
-  actions and the target network to evaluate them, reducing overestimation bias
-  inherent in standard Q-learning.
-* **Reward clipping**: Clips rewards to `[-1, 1]` to stabilise learning across
-  games with vastly different reward scales (critical for multi-game training).
-* **Multi-head architecture**: Shares a convolutional encoder across all
-  environments while maintaining dedicated output heads for each game.
-* **Standard hyperparameters**: Epsilon decays over 1M steps (not 75K), uses a
-  500K replay buffer, and updates the target network every 10K steps.
-* **TensorBoard integration**: Optional logging of training loss, Q-values,
-  epsilon, and per-game episode metrics.
-* **Resumable training**: Checkpoints include network weights, optimiser state,
-  replay samples, and bookkeeping counters.
+* **Full specialisation**: Each model focuses entirely on mastering one game
+* **Independent checkpointing**: Best models are saved per-game automatically
+* **Cross-platform**: Runs on CUDA (RTX 4090), MPS (M4 Mac), or CPU
+* **Embedded deployment**: Individual models are small enough for N64/embedded
 
-The class exposes the standard API (`act_and_learn`, `save`, `load`, `close`),
-making it straightforward to swap in alternative algorithms while keeping the
-method signatures intact.
+**Algorithm (per-game):**
+* **Double DQN** (van Hasselt et al., 2016): Reduces overestimation bias
+* **Reward clipping**: `[-1, 1]` for stable gradients
+* **Per-game replay buffer**: 100K transitions per game
+
+**Checkpoint structure:**
+```
+checkpoints/
+├── ALE_Pong-v5/
+│   ├── best.pt      # Best episode reward
+│   └── latest.pt    # Most recent save
+├── ALE_Breakout-v5/
+│   ├── best.pt
+│   └── latest.pt
+└── ensemble_state.pt  # Aggregate stats
+```
+
+On restart, the best checkpoint for each game is automatically loaded.  Use
+`--fresh-agent` to clear all checkpoints and start training from scratch.
 
 ### 4.2 `bg_record.py`
 
