@@ -413,8 +413,9 @@ class Agent:
         max_snapshots: int = 5,
         log_dir: Optional[str] = None,
         checkpoint_dir: str = "checkpoints",
+        device: str = "auto",
     ) -> None:
-        self.device = _get_device("auto")
+        self.device = _get_device(device)
         print(f"[Agent] Using device: {self.device}")
 
         self.checkpoint_dir = checkpoint_dir

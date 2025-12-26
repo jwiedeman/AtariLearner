@@ -352,6 +352,7 @@ def agent_proc(
     max_snapshots,
     fresh_agent,
     tensorboard_log,
+    device,
 ):
     seed('agent', 0)
     from myagent import Agent
@@ -375,6 +376,7 @@ def agent_proc(
         max_snapshots=max_snapshots,
         log_dir=tensorboard_log,
         checkpoint_dir=checkpoint_dir,
+        device=device,
     )
     agent.configure_envs(game_ids)
 
@@ -745,6 +747,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 int(args.max_checkpoint_snapshots),
                 bool(args.fresh_agent),
                 args.tensorboard_log,
+                device.type,  # Pass resolved device type to ensure consistency
             ),
         }
     ]
